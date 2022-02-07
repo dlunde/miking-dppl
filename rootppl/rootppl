@@ -99,7 +99,7 @@ else
     fi
 
     # Build executable and copy it to the user's working directory
-    make model=${abs_path_src_file} EXEC_NAME=${USER_SRC_DIR}/${out_name} ${args} EXTRA_FLAGS=-I${cwd}
+    make model=${abs_path_src_file} EXEC_NAME=${USER_SRC_DIR}/${out_name} ${args} EXTRA_FLAGS="-I${cwd} -w"
     mkdir -p $(dirname ${cwd}/${out_name}) # Create out dir if the user specified out path does not exist
     cp ${USER_SRC_DIR}/${out_name} ${cwd}/${out_name}
 
