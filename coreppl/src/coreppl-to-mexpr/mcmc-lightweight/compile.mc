@@ -2,7 +2,6 @@ include "name.mc"
 include "mexpr/const-arity.mc"
 
 include "../dists.mc"
-include "../common.mc"
 include "../../inference-common/smc.mc"
 include "../../cfa.mc"
 include "../../dppl-arg.mc"
@@ -15,7 +14,6 @@ let sym: Ref Int = ref 0
 
 lang MExprPPLLightweightMCMC =
   MExprPPL + Resample + TransformDist + MExprANFAll + MExprPPLCFA + MExprArity
-  + MExprPPLCommon
 
   -------------------------
   -- STATIC ALIGNED MCMC --
@@ -23,21 +21,9 @@ lang MExprPPLLightweightMCMC =
   -- NOTE: Assumes must be transformed based on alignment (some samples are
   -- just drawn directly, and some are reused)
 
-  sem compileAligned : Options -> Expr -> Expr
+  sem compileAligned : Options -> (Expr,Expr) -> Expr
   sem compileAligned options =
-  | t ->
-
-    -- Read in native versions of higher-order constants and replace usage of
-    -- the constants with the native version. Simplifies CFA analysis (no need
-    -- to handle higher-order constants).
-    let t = replaceHigherOrderConstants t in
-    -- Also symbolize the new replacements to avoid CFA inaccuracy
-    let t = symbolizeExpr
-      { symEnvEmpty with allowFree = true, ignoreExternals = true } t
-    in
-
-    -- ANF transformation (required for analysis)
-    let t = normalizeTerm t in
+  | (_,t) ->
 
     -- Alignment analysis
     let alignRes = alignCfa t in
@@ -79,18 +65,9 @@ lang MExprPPLLightweightMCMC =
   ------------------------------------------
   -- DYNAMIC ("LIGHTWEIGHT") ALIGNED MCMC --
   ------------------------------------------
-  sem compile : Options -> Expr -> Expr
+  sem compile : Options -> (Expr,Expr) -> Expr
   sem compile options =
-  | t ->
-
-    -- Read in native versions of higher-order constants and replace usage of
-    -- the constants with the native version. Simplifies addressing transform
-    -- (no need to handle higher-order constants).
-    let t = replaceHigherOrderConstants t in
-    -- Also symbolize the new replacements to avoid CFA inaccuracy
-    let t = symbolizeExpr
-      { symEnvEmpty with allowFree = true, ignoreExternals = true } t
-    in
+  | (_,t) ->
 
     -- Addressing transform combined with CorePPL->MExpr transform
     let t = transform (setEmpty nameCmp) t in

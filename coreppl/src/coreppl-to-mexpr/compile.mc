@@ -1,5 +1,6 @@
 include "mexpr/ast-builder.mc"
 include "mexpr/externals.mc"
+include "mexpr/boot-parser.mc"
 include "mexpr/type.mc"
 include "sys.mc"
 
@@ -7,8 +8,7 @@ include "../coreppl.mc"
 include "../inference-common/smc.mc"
 include "../parser.mc"
 include "../dppl-arg.mc"
-
-include "./common.mc"
+include "../src-location.mc"
 
 -- Inference methods
 include "apf/compile.mc"
@@ -17,36 +17,118 @@ include "importance/compile.mc"
 include "mcmc-naive/compile.mc"
 include "mcmc-trace/compile.mc"
 include "mcmc-lightweight/compile.mc"
-include "smc/compile.mc"
 
+let parseRuntime = use BootParser in lam runtime. parseMCoreFile {
+  defaultBootParserParseMCoreFileArg with
+    eliminateDeadCode = false,
+    allowFree = true
+  } (join [corepplSrcLoc, "/coreppl-to-mexpr/", runtime])
 
 -- NOTE(dlunde,2022-05-04): No way to distinguish between CorePPL and MExpr AST
 -- types here. Optimally, the type would be Options -> CorePPLExpr -> MExprExpr
 -- or similar.
-lang MExprCompile = MExprPPL + Resample + Externals
+lang MExprCompile =
+  MExprPPL + Resample + Externals + MExprANFAll + MExprPPLCFA
+
+  sem _replaceHigherOrderConstant: Const -> Option Expr
+  sem _replaceHigherOrderConstant =
+  | CMap _ -> Some (var_ "map")
+  | CMapi _ -> Some (var_ "mapi")
+  | CIter _ -> Some (var_ "iter")
+  | CIteri _ -> Some (var_ "iteri")
+  | CFoldl _ -> Some (var_ "foldl")
+  | CFoldr _ -> Some (var_ "foldr")
+  | CCreate _ -> Some (var_ "create")
+  | _ -> None ()
+
+  sem _replaceHigherOrderConstantExpr: Expr -> Expr
+  sem _replaceHigherOrderConstantExpr =
+  | TmConst r ->
+    match _replaceHigherOrderConstant r.val with Some t then
+      withType r.ty (withInfo r.info t)
+    else TmConst r
+  | t -> t
+
+  sem replaceHigherOrderConstants: Expr -> Expr
+  sem replaceHigherOrderConstants =
+  | t ->
+    let t = mapPre_Expr_Expr _replaceHigherOrderConstantExpr t in
+    let replacements = parseRuntime "runtime-const.mc" in
+    let replacements = normalizeTerm replacements in
+    let t = bind_ replacements t in
+    let t = symbolizeExpr
+      { symEnvEmpty with allowFree = true, ignoreExternals = true } t
+    in
+    t
+
+  sem desymbolizeExternals =
+  | prog ->
+    recursive let rec = lam env. lam prog.
+      match prog with TmExt ({ ident = ident, inexpr = inexpr } & b) then
+        let noSymIdent = nameNoSym (nameGetStr ident) in
+        let env =
+          if nameHasSym ident then (mapInsert ident noSymIdent env) else env
+        in
+        TmExt { b with ident = noSymIdent, inexpr = rec env inexpr }
+      else match prog with TmVar ({ ident = ident } & b) then
+        let ident =
+          match mapLookup ident env with Some ident then ident else ident in
+        TmVar { b with ident = ident }
+      else smap_Expr_Expr (rec env) prog
+    in rec (mapEmpty nameCmp) prog
+
+  sem findDetDefNames : Expr -> Set Name
+  sem findDetDefNames =
+  | t ->
+    let checkpoint = lam t.
+      match t with TmLet { ident = ident, body = body } then
+        match body with TmWeight _ | TmObserve _ then true else false
+      else errorSingle [infoTm t] "Impossible"
+    in
+    let graph = emptyCFAGraph t in
+    let graph = addBaseMatchConstraints graph in
+    let graph = addStochMatchConstraints graph in
+    let graph = addBaseConstraints graph t in
+    let graph = addStochConstraints graph t in
+    let graph = addConstAllConstraints graph t in
+    let graph = addCheckpointConstraints checkpoint graph t in
+    let graph = solveCfa graph in
+    tensorFoldi (lam acc: Set Name. lam i: [Int]. lam v: Set AbsVal.
+        if setAny (lam av. match av with AVCheckpoint _ | AVStoch _ then true else false) v
+        then acc
+        else setInsert (int2name graph.im (head i)) acc
+      ) (setEmpty nameCmp) graph.data
+
+  -- sem wrapModel: Set Name -> Expr -> Expr
+  -- sem wrapModel detDefNames =
+  -- | t ->
+  --   recursive let rec refersToState : Expr -> Bool = lam t.
+
+  --   in
+  --   recursive let rec : Expr -> ([Expr], [Expr]) -> ([Expr], [Expr]) =
+  --     lam t. lam acc.
+  --       switch t
+  --       case TmLet _ then
+  --       case TmRecLets _ then
+  --       end
+  --   in
+
+  --   -- TODO: Do the splitting here
+  --   -- NOTE: state is not visible if we lift things outside of the "model"
+  --   -- function, we must take this into account here. Also, other bindings
+  --   that depend on bindings that contains state cannot be lifted. In general, anything that depends on something that is not lifted cannot be lifted.
+  --   match splitDefs prog detDefNames with (detDefs,defs) in
+  --     bind_ detDefs
+  --       (ulet_ "model" (lams_ [("state", tycon_ "State")] prog)) in
+
 end
+
 let mexprCompile: Options -> Expr -> Expr =
   use MExprCompile in
   lam options. lam prog.
 
-    let desymbolizeExternals = lam prog.
-      recursive let rec = lam env. lam prog.
-        match prog with TmExt ({ ident = ident, inexpr = inexpr } & b) then
-          let noSymIdent = nameNoSym (nameGetStr ident) in
-          let env =
-            if nameHasSym ident then (mapInsert ident noSymIdent env) else env
-          in
-          TmExt { b with ident = noSymIdent, inexpr = rec env inexpr }
-        else match prog with TmVar ({ ident = ident } & b) then
-          let ident =
-            match mapLookup ident env with Some ident then ident else ident in
-          TmVar { b with ident = ident }
-        else smap_Expr_Expr (rec env) prog
-      in rec (mapEmpty nameCmp) prog
-    in
-
     -- Load runtime and compile function
-    let compiler: (String, Expr -> Expr) =
+    let compiler: (String, (Expr,Expr) -> Expr) =
       switch options.method
         case "mexpr-apf" then compilerAPF options
         case "mexpr-bpf" then compilerBPF options
@@ -54,7 +136,6 @@ let mexprCompile: Options -> Expr -> Expr =
         case "mexpr-mcmc-naive" then compilerNaiveMCMC options
         case "mexpr-mcmc-trace" then compilerTraceMCMC options
         case "mexpr-mcmc-lightweight" then compilerLightweightMCMC options
-        case "mexpr-smc" then compilerSMC options
         case _ then error (
           join [ "Unknown CorePPL to MExpr inference method:", options.method ]
         )
@@ -78,10 +159,27 @@ let mexprCompile: Options -> Expr -> Expr =
     -- Desymbolize externals in case any were symbolized beforehand
     let prog = desymbolizeExternals prog in
 
-    -- Apply inference-specific transformation
-    let prog = compile prog in
+    -- ANF transformation
+    let prog = normalizeTerm prog in
 
-    -- Parse runtime
+    -- ANF with higher-order intrinsics replaced with seq-native.mc
+    let progNoHigherOrderConstants = replaceHigherOrderConstants prog in
+
+    -- Static analysis to get deterministic definitions in the model
+    let detDefNames: Set Name = findDetDefNames progNoHigherOrderConstants in
+
+    -- printLn ""; printLn "--- DETERMINISTIC NAMES ---";
+    -- match mapAccumL pprintEnvGetStr pprintEnvEmpty (setToSeq detDefNames) with (env,strings) in
+    -- printLn (join [ "[", strJoin "," strings, "]"]);
+
+    -- printLn ""; printLn "--- ANALYZED PROGRAM ---";
+    -- match pprintCode 0 env progNoHigherOrderConstants with (env,str) in
+    -- printLn (str);
+
+    -- Apply inference-specific transformation
+    let prog = compile (prog, progNoHigherOrderConstants) in
+
+    -- Parse inference runtime
     let runtime = parseRuntime runtime in
 
     -- Get external definitions from runtime-AST (input to next step)
@@ -91,8 +189,13 @@ let mexprCompile: Options -> Expr -> Expr =
     -- runtime)
     let prog = removeExternalDefs externals prog in
 
-    -- Put model in top-level model function
-    let prog = ulet_ "model" (lams_ [("state", tycon_ "State")] prog) in
+    -- Put model in top-level model function and extract deterministic definitions
+    let prog = wrapModel prog in
+    -- let prog = (ulet_ "model" (lams_ [("state", tycon_ "State")] prog)) in
+
+    -- printLn ""; printLn "--- COMPILED PROGRAM ---";
+    -- match pprintCode 0 env prog with (env,str) in
+    -- printLn (str);
 
     -- Construct record accessible in runtime
     -- NOTE(dlunde,2022-06-28): It would be nice if we automatically lift the
@@ -161,8 +264,6 @@ with () using lam. lam. true in
 utest mexprCompile {default with method = "mexpr-mcmc-lightweight" } simple
 with () using lam. lam. true in
 utest mexprCompile {default with method = "mexpr-mcmc-lightweight", align = true } simple
-with () using lam. lam. true in
-utest mexprCompile {default with method = "mexpr-smc" } simple
 with () using lam. lam. true in
 
 ()
