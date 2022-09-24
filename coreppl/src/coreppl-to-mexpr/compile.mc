@@ -99,27 +99,59 @@ lang MExprCompile =
         else setInsert (int2name graph.im (head i)) acc
       ) (setEmpty nameCmp) graph.data
 
-  -- sem wrapModel: Set Name -> Expr -> Expr
-  -- sem wrapModel detDefNames =
-  -- | t ->
-  --   recursive let rec refersToState : Expr -> Bool = lam t.
+  sem wrapModel: Set Name -> Expr -> Expr
+  sem wrapModel detDefNames =
+  | t ->
+    let refers : Set Name -> Expr -> Bool = lam names. lam t.
+      recursive let rec: Bool -> Expr -> Bool = lam acc. lam t.
+        if acc then acc else
+          match t with TmVar r then setMem r.ident names
+          else sfold_Expr_Expr rec acc t
+      in
+      rec false t
+    in
+    recursive let rec: Set Name -> [Expr] -> [Expr] -> Expr -> ([Expr], [Expr]) =
+      lam modelNames. lam accModel. lam accDet. lam t.
+        switch t
+        case TmLet r then
+          let t = TmLet { r with inexpr = unit_ } in
+          if and (setMem r.ident detDefNames)
+               (not (refers modelNames r.body)) then
+            rec modelNames accModel (cons t accDet) r.inexpr
+          else
+            rec (setInsert r.ident modelNames) (cons t accModel) accDet r.inexpr
+        case TmRecLets r then
+          let t = TmRecLets { r with inexpr = unit_ } in
+          if forAll (lam b. and (setMem b.ident detDefNames)
+                              (not (refers modelNames b.body))) r.bindings then
+            rec modelNames accModel (cons t accDet) r.inexpr
+          else
+            let modelNames =
+              foldl (lam acc. lam b. setInsert b.ident acc)
+                modelNames r.bindings
+            in
+            rec modelNames (cons t accModel) accDet r.inexpr
+        case TmConDef r then
+          let t = TmConDef { r with inexpr = unit_ } in
+          rec modelNames accModel (cons t accDet) r.inexpr
+        case TmType r then
+          let t = TmType { r with inexpr = unit_ } in
+          rec modelNames accModel (cons t accDet) r.inexpr
+        case TmExt r then
+          let t = TmExt { r with inexpr = unit_ } in
+          rec modelNames accModel (cons t accDet) r.inexpr
+        case TmUtest r then
+          let t = TmUtest { r with next = unit_ } in
+          rec modelNames accModel (cons t accDet) r.next
+        case t then (cons t accModel, accDet)
+        end
+    in
 
-  --   in
-  --   recursive let rec : Expr -> ([Expr], [Expr]) -> ([Expr], [Expr]) =
-  --     lam t. lam acc.
-  --       switch t
-  --       case TmLet _ then
-  --       case TmRecLets _ then
-  --       end
-  --   in
-
-  --   -- TODO: Do the splitting here
-  --   -- NOTE: state is not visible if we lift things outside of the "model"
-  --   -- function, we must take this into account here. Also, other bindings
-  --   that depend on bindings that contains state cannot be lifted. In general, anything that depends on something that is not lifted cannot be lifted.
-  --   match splitDefs prog detDefNames with (detDefs,defs) in
-  --     bind_ detDefs
-  --       (ulet_ "model" (lams_ [("state", tycon_ "State")] prog)) in
+    match rec (setEmpty nameCmp) (toList []) (toList []) t with (model,det) in
+    let model = foldl1 (lam acc. lam def. bind_ def acc) model in
+    let model = ulet_ "model" (lams_ [("state", tycon_ "State")] model) in
+    let withDets = foldl (lam acc. lam def. bind_ def acc) model det in
+    withDets
 
 end
 
@@ -190,7 +222,7 @@ let mexprCompile: Options -> Expr -> Expr =
     let prog = removeExternalDefs externals prog in
 
     -- Put model in top-level model function and extract deterministic definitions
-    let prog = wrapModel prog in
+    let prog = wrapModel detDefNames prog in
     -- let prog = (ulet_ "model" (lams_ [("state", tycon_ "State")] prog)) in
 
     -- printLn ""; printLn "--- COMPILED PROGRAM ---";
