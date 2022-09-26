@@ -3,6 +3,7 @@ include "mexpr/externals.mc"
 include "mexpr/boot-parser.mc"
 include "mexpr/type.mc"
 include "sys.mc"
+include "map.mc"
 
 include "../coreppl.mc"
 include "../inference-common/smc.mc"
@@ -77,82 +78,6 @@ lang MExprCompile =
       else smap_Expr_Expr (rec env) prog
     in rec (mapEmpty nameCmp) prog
 
-  sem findDetDefNames : Expr -> Set Name
-  sem findDetDefNames =
-  | t ->
-    let checkpoint = lam t.
-      match t with TmLet { ident = ident, body = body } then
-        match body with TmWeight _ | TmObserve _ then true else false
-      else errorSingle [infoTm t] "Impossible"
-    in
-    let graph = emptyCFAGraph t in
-    let graph = addBaseMatchConstraints graph in
-    let graph = addStochMatchConstraints graph in
-    let graph = addBaseConstraints graph t in
-    let graph = addStochConstraints graph t in
-    let graph = addConstAllConstraints graph t in
-    let graph = addCheckpointConstraints checkpoint graph t in
-    let graph = solveCfa graph in
-    tensorFoldi (lam acc: Set Name. lam i: [Int]. lam v: Set AbsVal.
-        if setAny (lam av. match av with AVCheckpoint _ | AVStoch _ then true else false) v
-        then acc
-        else setInsert (int2name graph.im (head i)) acc
-      ) (setEmpty nameCmp) graph.data
-
-  sem wrapModel: Set Name -> Expr -> Expr
-  sem wrapModel detDefNames =
-  | t ->
-    let refers : Set Name -> Expr -> Bool = lam names. lam t.
-      recursive let rec: Bool -> Expr -> Bool = lam acc. lam t.
-        if acc then acc else
-          match t with TmVar r then setMem r.ident names
-          else sfold_Expr_Expr rec acc t
-      in
-      rec false t
-    in
-    recursive let rec: Set Name -> [Expr] -> [Expr] -> Expr -> ([Expr], [Expr]) =
-      lam modelNames. lam accModel. lam accDet. lam t.
-        switch t
-        case TmLet r then
-          let t = TmLet { r with inexpr = unit_ } in
-          if and (setMem r.ident detDefNames)
-               (not (refers modelNames r.body)) then
-            rec modelNames accModel (cons t accDet) r.inexpr
-          else
-            rec (setInsert r.ident modelNames) (cons t accModel) accDet r.inexpr
-        case TmRecLets r then
-          let t = TmRecLets { r with inexpr = unit_ } in
-          if forAll (lam b. and (setMem b.ident detDefNames)
-                              (not (refers modelNames b.body))) r.bindings then
-            rec modelNames accModel (cons t accDet) r.inexpr
-          else
-            let modelNames =
-              foldl (lam acc. lam b. setInsert b.ident acc)
-                modelNames r.bindings
-            in
-            rec modelNames (cons t accModel) accDet r.inexpr
-        case TmConDef r then
-          let t = TmConDef { r with inexpr = unit_ } in
-          rec modelNames accModel (cons t accDet) r.inexpr
-        case TmType r then
-          let t = TmType { r with inexpr = unit_ } in
-          rec modelNames accModel (cons t accDet) r.inexpr
-        case TmExt r then
-          let t = TmExt { r with inexpr = unit_ } in
-          rec modelNames accModel (cons t accDet) r.inexpr
-        case TmUtest r then
-          let t = TmUtest { r with next = unit_ } in
-          rec modelNames accModel (cons t accDet) r.next
-        case t then (cons t accModel, accDet)
-        end
-    in
-
-    match rec (setEmpty nameCmp) (toList []) (toList []) t with (model,det) in
-    let model = foldl1 (lam acc. lam def. bind_ def acc) model in
-    let model = ulet_ "model" (lams_ [("state", tycon_ "State")] model) in
-    let withDets = foldl (lam acc. lam def. bind_ def acc) model det in
-    withDets
-
 end
 
 let mexprCompile: Options -> Expr -> Expr =
@@ -194,19 +119,9 @@ let mexprCompile: Options -> Expr -> Expr =
     -- ANF transformation
     let prog = normalizeTerm prog in
 
-    -- ANF with higher-order intrinsics replaced with seq-native.mc
+    -- ANF with higher-order intrinsics replaced with alternatives in
+    -- seq-native.mc
     let progNoHigherOrderConstants = replaceHigherOrderConstants prog in
-
-    -- Static analysis to get deterministic definitions in the model
-    let detDefNames: Set Name = findDetDefNames progNoHigherOrderConstants in
-
-    -- printLn ""; printLn "--- DETERMINISTIC NAMES ---";
-    -- match mapAccumL pprintEnvGetStr pprintEnvEmpty (setToSeq detDefNames) with (env,strings) in
-    -- printLn (join [ "[", strJoin "," strings, "]"]);
-
-    -- printLn ""; printLn "--- ANALYZED PROGRAM ---";
-    -- match pprintCode 0 env progNoHigherOrderConstants with (env,str) in
-    -- printLn (str);
 
     -- Apply inference-specific transformation
     let prog = compile (prog, progNoHigherOrderConstants) in
@@ -222,12 +137,7 @@ let mexprCompile: Options -> Expr -> Expr =
     let prog = removeExternalDefs externals prog in
 
     -- Put model in top-level model function and extract deterministic definitions
-    let prog = wrapModel detDefNames prog in
-    -- let prog = (ulet_ "model" (lams_ [("state", tycon_ "State")] prog)) in
-
-    -- printLn ""; printLn "--- COMPILED PROGRAM ---";
-    -- match pprintCode 0 env prog with (env,str) in
-    -- printLn (str);
+    let prog = (ulet_ "model" (lams_ [("state", tycon_ "State")] prog)) in
 
     -- Construct record accessible in runtime
     -- NOTE(dlunde,2022-06-28): It would be nice if we automatically lift the
@@ -244,11 +154,16 @@ let mexprCompile: Options -> Expr -> Expr =
 
     -- Printing function for return type
     let tyPrintFun =
-      match resTy with TyInt _ then   (var_ "int2string")
+    let errMsg = "Return type cannot be printed" in
+      match resTy with TyInt _ then (var_ "int2string")
       else match resTy with TyFloat _ then uconst_ (CFloat2string ())
       else match resTy with TyBool _ then (var_ "bool2string")
       else match resTy with TySeq { ty = TyChar _ } then (ulam_ "x" (var_ "x"))
-      else error "Return type cannot be printed"
+      else match resTy with TyChar _ then (ulam_ "x" (seq_ [(var_ "x")]))
+      else match resTy with TyRecord r then
+        if mapIsEmpty r.fields then (ulam_ "x" (str_ "()"))
+        else error errMsg
+      else error errMsg
     in
 
     let post = bindall_ [
