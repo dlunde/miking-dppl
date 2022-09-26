@@ -80,7 +80,7 @@ lang MExprPPLLightweightMCMC =
 
     -- Initialize addr to the empty list (not rope) at the
     -- beginning of the program.
-    let t = bind_ (nulet_ addrName (var_ "emptyList")) t in
+    let t = bind_ (nulet_ addrName (var_ "emptyAddress")) t in
 
     t
 
@@ -90,7 +90,7 @@ lang MExprPPLLightweightMCMC =
     let i = withInfo i in
     let s = deref sym in
     modref sym (addi s 1);
-    cons_ (i (int_ s)) (i (nvar_ addrName))
+    i (appf2_ (i (var_ "constructAddress")) (i (nvar_ addrName)) (i (int_ s)))
 
   sem transformConst: Int -> Expr -> Expr
   sem transformConst arity =
@@ -105,7 +105,7 @@ lang MExprPPLLightweightMCMC =
     let varNames: [Name] = vars [] arity in
     let inner = foldl (lam acc. lam v. i (app_ acc (nvar_ v))) e varNames in
     foldr (lam v. lam acc.
-        i (nlam_ addrName (tyseq_ tyint_) (i (nulam_ v acc)))
+        i (nlam_ addrName (tycon_ "Address") (i (nulam_ v acc)))
       ) inner varNames
 
   sem transform: Set Name -> Expr -> Expr
@@ -116,7 +116,7 @@ lang MExprPPLLightweightMCMC =
   | TmLam _ & t ->
     match smap_Expr_Expr (transform externalIds) t with TmLam r & t in
     let i = withInfo r.info in
-    i (nlam_ addrName (tyseq_ tyint_) t)
+    i (nlam_ addrName (tycon_ "Address") t)
 
   | TmConst r & t ->
     if isHigherOrderFunType (tyConst r.val) then
@@ -244,7 +244,7 @@ lang MExprPPLLightweightMCMC =
     let i = tyWithInfo r.info in
     let from = tyTransform r.from in
     let to = tyTransform r.to in
-    (i (tyarrow_ (i (tyseq_ (i tyint_)))
+    (i (tyarrow_ (i (tycon_ "Address"))
         (TyArrow { r with from = from, to = to })))
 
   -------------------------------

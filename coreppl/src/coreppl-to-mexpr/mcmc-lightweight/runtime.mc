@@ -14,7 +14,10 @@ include "../runtime-dists.mc"
 -- Any-type, used for samples
 type Any = ()
 
-type Address = [Int]
+-- An address is a list of integers. The first element in the tuple is the
+-- length of the list (to speed up addrCmp), and the second element is the list
+-- itself.
+type Address = (Int, [Int])
 
 -- In lightweight MCMC, the state is the accumulated weight, a map of samples for the current run, and a map of samples from the previous run to potentially reuse.
 type State = {
@@ -36,23 +39,29 @@ type State = {
 
 }
 
-let emptyList = toList []
+let emptyAddress = (0,toList [])
 
--- Custom sequence comparison (the one in the standard library is optimized for
--- ropes, not lists)
-let seqCmp : all a. (a -> a -> Int) -> [a] -> [a] -> Int = lam cmp. lam s1. lam s2.
-  recursive let work = lam s1. lam s2.
-    match (s1, s2) with ([h1] ++ t1, [h2] ++ t2) then
-      let c = cmp h1 h2 in
+-- Address comparison
+let addrCmp : Address -> Address -> Int = lam a1. lam a2.
+  recursive let work = lam l1. lam l2.
+    match (l1, l2) with ([h1] ++ t1, [h2] ++ t2) then
+      let c = subi h1 h2 in
       if eqi c 0 then work t1 t2
       else c
-    else match (s1, s2) with (t1, []) then 1
-    else match (s1, s2) with ([], t2) then negi 1
+    else match (l1, l2) with (t1, []) then 1
+    else match (l1, l2) with ([], t2) then negi 1
     else 0
   in
-  work s1 s2
+  let n1 = a1.0 in
+  let n2 = a2.0 in
+  let ndiff = subi n1 n2 in
+  if eqi ndiff 0 then work a1.1 a2.1
+  else ndiff
 
-let emptyAddressMap = mapEmpty (seqCmp subi)
+let emptyAddressMap = mapEmpty addrCmp
+
+let constructAddress: Address -> Int -> Address = lam prev. lam sym.
+  (addi prev.0 1, cons sym prev.1)
 
 -- State (reused throughout inference)
 let state: State = {
