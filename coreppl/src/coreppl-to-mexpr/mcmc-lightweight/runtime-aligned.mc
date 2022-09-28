@@ -135,8 +135,8 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         modTrace ();
         modref state.weight 0.;
         modref state.weightReused 0.;
-        modref state.traceLength 0;
         modref state.alignedTrace emptyList;
+        modref state.traceLength 0;
         let sample = model state in
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in

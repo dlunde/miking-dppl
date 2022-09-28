@@ -82,7 +82,6 @@ let incrTraceLength: () -> () = lam.
 let sample: all a. Address -> Dist a -> a = lam addr. lam dist.
   let oldDb: Map Address (Option Any) = deref state.oldDb in
   let newSample: () -> Any = lam. unsafeCoerce (dist.sample ()) in
-
   let sample: Any =
     match mapLookup addr oldDb with Some (Some sample) then
       let s: a = unsafeCoerce sample in
