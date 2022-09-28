@@ -66,15 +66,29 @@ let sampleAligned: all a. Dist a -> a = lam dist.
     match oldAlignedTrace with [sample] ++ oldAlignedTrace then
       modref state.oldAlignedTrace oldAlignedTrace;
       match sample with Some sample then
+        -- printLn (join [
+        --   "ALIGNED: Aligned _reused_ sample, index ",
+        --   int2string (subi (deref state.alignedTraceLength) (length oldAlignedTrace))
+        -- ]);
         let s: a = unsafeCoerce sample in
         modref state.weightReused
           (addf (deref state.weightReused) (dist.logObserve s));
         sample
-      else newSample ()
+      else
+        -- printLn (join [
+        --   "ALIGNED: Aligned _new_ sample, index ",
+        --   int2string (subi (deref state.alignedTraceLength) (length oldAlignedTrace))
+        -- ]);
+        newSample ()
 
     -- This case should only happen in the first run when there is no previous
     -- aligned trace
-    else newSample ()
+    else
+      -- printLn (join [
+      --   "ALIGNED: Aligned _new_ sample, index ",
+      --   int2string (subi (deref state.alignedTraceLength) (length oldAlignedTrace))
+      -- ]);
+      newSample ()
 
   in
   incrTraceLength ();
@@ -82,6 +96,7 @@ let sampleAligned: all a. Dist a -> a = lam dist.
   unsafeCoerce sample
 
 let sampleUnaligned: all a. Dist a -> a = lam dist.
+  -- printLn "ALIGNED: Unaligned sample, should never happen for this model";
   incrTraceLength ();
   dist.sample ()
 
@@ -138,6 +153,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         modref state.alignedTrace emptyList;
         modref state.traceLength 0;
         let sample = model state in
+        -- printLn "--------------";
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
@@ -189,6 +205,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
       modref state.alignedTraceLength (length (deref state.alignedTrace));
 
       -- Sample the rest
+      -- printLn "--------------";
       let res = mh [weight] [weightReused] [sample] iter in
 
       -- Reverse to get the correct order

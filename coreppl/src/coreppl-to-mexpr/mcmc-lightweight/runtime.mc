@@ -43,20 +43,43 @@ let emptyAddress = (0,toList [])
 
 -- Address comparison
 let addrCmp : Address -> Address -> Int = lam a1. lam a2.
+  -- printLn (join [
+  --   "CMP: Comparing (",
+  --   int2string a1.0, ",",
+  --   join ["[", strJoin ", " (map int2string a1.1), "]"],
+  --   ") and (",
+  --   int2string a2.0, ",",
+  --   join ["[", strJoin ", " (map int2string a2.1), "]"],
+  --   ")"
+  -- ]);
   recursive let work = lam l1. lam l2.
     match (l1, l2) with ([h1] ++ t1, [h2] ++ t2) then
+      -- printLn "CMP: Match 1 ...";
       let c = subi h1 h2 in
       if eqi c 0 then work t1 t2
       else c
-    else match (l1, l2) with (t1, []) then 1
-    else match (l1, l2) with ([], t2) then negi 1
-    else 0
+    else match (l1, l2) with ([_] ++ _, []) then
+      -- printLn "CMP: Match 2 ...";
+      1
+    else match (l1, l2) with ([], [_] ++ _) then
+      -- printLn "CMP: Match 3 ...";
+      negi 1
+    else
+      -- printLn "CMP: Match 4 ..., addrCmp equal!";
+      0
   in
   let n1 = a1.0 in
+  -- printLn (join ["CMP: n1 =", int2string n1]);
   let n2 = a2.0 in
+  -- printLn (join ["CMP: n2 =", int2string n2]);
   let ndiff = subi n1 n2 in
-  if eqi ndiff 0 then work a1.1 a2.1
-  else ndiff
+  -- printLn (join ["CMP: ndiff =", int2string ndiff]);
+  let res = if eqi ndiff 0 then
+    -- printLn "CMP: Entering work...";
+    work a1.1 a2.1
+  else ndiff in
+  -- printLn "------------------";
+  res
 
 let emptyAddressMap = mapEmpty addrCmp
 
@@ -84,11 +107,20 @@ let sample: all a. Address -> Dist a -> a = lam addr. lam dist.
   let newSample: () -> Any = lam. unsafeCoerce (dist.sample ()) in
   let sample: Any =
     match mapLookup addr oldDb with Some (Some sample) then
+      -- printLn (join [
+      --   "LIGHTWEIGHT: _Reused_ sample, address ",
+      --      join ["[", strJoin ", " (map int2string addr.1), "]"]
+      -- ]);
       let s: a = unsafeCoerce sample in
       modref state.weightReused
         (addf (deref state.weightReused) (dist.logObserve s));
       sample
-    else newSample ()
+    else
+      -- printLn (join [
+      --   "LIGHTWEIGHT: _New_ sample, address ",
+      --      join ["[", strJoin ", " (map int2string addr.1), "]"]
+      -- ]);
+      newSample ()
   in
   incrTraceLength ();
   modref state.db (mapInsert addr sample (deref state.db));
@@ -140,6 +172,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         modref state.db emptyAddressMap;
         modref state.traceLength 0;
         let sample = model state in
+        -- printLn "--------------";
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
@@ -188,6 +221,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
       let iter = subi runs 1 in
 
       -- Sample the rest
+      -- printLn "--------------";
       let res = mh [weight] [weightReused] [sample] iter in
 
       -- Reverse to get the correct order
