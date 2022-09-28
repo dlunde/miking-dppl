@@ -12,13 +12,13 @@ parser.add_argument('--bins', type=int, default=100,
 parser.add_argument('--burn', type=int, default=0,
                     help="Number of samples to burn (e.g., if using MCMC). The default is 0.")
 parser.add_argument('--xmin', type=float, default=None,
-                    help="")
+                    help="For two-dimensional numerical plots, determines the leftmost edge of the plot axis.")
 parser.add_argument('--xmax', type=float, default=None,
-                    help="")
+                    help="For two-dimensional numerical plots, determines the rightmost edge of the plot axis.")
 parser.add_argument('--ymin', type=float, default=None,
-                    help="")
+                    help="For two-dimensional numerical plots, determines the bottom edge of the plot axis.")
 parser.add_argument('--ymax', type=float, default=None,
-                    help="")
+                    help="For two-dimensional numerical plots, determines the top edge of the plot axis.")
 
 args = parser.parse_args()
 
