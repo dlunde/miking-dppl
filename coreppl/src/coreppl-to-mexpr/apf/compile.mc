@@ -20,7 +20,7 @@ lang MExprPPLAPF =
   | TmLet { ident = ident, body = TmResample {},
             inexpr = inexpr } & t ->
     let i = withInfo (infoTm t) in
-    let k = 
+    let k =
       if tailCall t then
         match k with Some k then
           k
@@ -45,11 +45,9 @@ lang MExprPPLAPF =
     i (appf2_ (i (var_ "updateWeight")) t.weight (i (var_ "state")))
   | t -> t
 
-  sem compile: Options -> Expr -> Expr
+  sem compile : Options -> (Expr,Expr) -> Expr
   sem compile options =
-  | t ->
-    -- ANF transformation (required for CPS)
-    let t = normalizeTerm t in
+  | (_,t) ->
     -- Static analysis and CPS transformation
     let t =
       let cont = (ulam_ "x" (conapp_ "End" (var_ "x"))) in
