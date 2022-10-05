@@ -50,7 +50,7 @@ def is_float(s):
 if is_float(samples[0]):
     samples = [float(sample) for sample in samples]
     range = (args.xmin,args.xmax) if (args.xmin is not None and args.xmax is not None) else None
-    plt.hist(samples, bins=args.bins, density=True, weights=weights, range=(args.xmin,args.xmax))
+    plt.hist(samples, bins=args.bins, density=True, weights=weights, range=range)
     if args.xmin is not None: plt.xlim(left=args.xmin)
     if args.xmax is not None: plt.xlim(right=args.xmax)
     if args.ymin is not None: plt.ylim(bottom=args.ymin)

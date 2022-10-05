@@ -21,17 +21,18 @@ type State = {
   -- The weight of the current execution
   weight: Ref Float,
 
-  -- The weight of reused values in the current execution
+  -- The weight of reused values in the previous and current executions
+  weightReusedPrev: Ref Float,
   weightReused: Ref Float,
 
   -- The aligned trace for this execution
-  alignedTrace: Ref [Any],
+  alignedTrace: Ref [(Any, Float)],
 
   -- Number of encountered assumes (unaligned and aligned)
   traceLength: Ref Int,
 
   -- The previous aligned trace, with potentially invalidated samples
-  oldAlignedTrace: Ref [Option Any],
+  oldAlignedTrace: Ref [Option (Any,Float)],
 
   -- Aligned trace length (a constant, determined at the first run)
   alignedTraceLength: Ref Int
@@ -45,6 +46,7 @@ let emptyList = toList []
 -- State (reused throughout inference)
 let state: State = {
   weight = ref 0.,
+  weightReusedPrev = ref 0.,
   weightReused = ref 0.,
   alignedTrace = ref emptyList,
   traceLength = ref 0,
@@ -60,20 +62,25 @@ let incrTraceLength: () -> () = lam.
 
 -- Procedure at aligned samples
 let sampleAligned: all a. Dist a -> a = lam dist.
-  let oldAlignedTrace: [Option Any] = deref state.oldAlignedTrace in
-  let newSample: () -> Any = lam. unsafeCoerce (dist.sample ()) in
-  let sample: Any =
+  let oldAlignedTrace: [Option (Any,Float)] = deref state.oldAlignedTrace in
+  let newSample: () -> (Any,Float) = lam.
+    let s = dist.sample () in
+    let w = dist.logObserve s in
+    (unsafeCoerce s, w)
+  in
+  let sample: (Any, Float) =
     match oldAlignedTrace with [sample] ++ oldAlignedTrace then
       modref state.oldAlignedTrace oldAlignedTrace;
-      match sample with Some sample then
+      match sample with Some (sample,w) then
         -- printLn (join [
         --   "ALIGNED: Aligned _reused_ sample, index ",
         --   int2string (subi (deref state.alignedTraceLength) (length oldAlignedTrace))
         -- ]);
         let s: a = unsafeCoerce sample in
-        modref state.weightReused
-          (addf (deref state.weightReused) (dist.logObserve s));
-        sample
+        let wNew = dist.logObserve s in
+        modref state.weightReused (addf (deref state.weightReused) wNew);
+        modref state.weightReusedPrev (addf (deref state.weightReusedPrev) w);
+        (sample, wNew)
       else
         -- printLn (join [
         --   "ALIGNED: Aligned _new_ sample, index ",
@@ -93,7 +100,7 @@ let sampleAligned: all a. Dist a -> a = lam dist.
   in
   incrTraceLength ();
   modref state.alignedTrace (cons sample (deref state.alignedTrace));
-  unsafeCoerce sample
+  unsafeCoerce (sample.0)
 
 let sampleUnaligned: all a. Dist a -> a = lam dist.
   -- printLn "ALIGNED: Unaligned sample, should never happen for this model";
@@ -114,7 +121,8 @@ let modTrace: () -> () = lam.
   -- Enable global modifications with probability gProb
   let modGlobal: Bool = bernoulliSample gProb in
 
-  recursive let rec: Int -> [Any] -> [Option Any] -> [Option Any] =
+  recursive let rec: Int -> [(Any,Float)] -> [Option (Any,Float)]
+                       -> [Option (Any,Float)] =
     lam i. lam samples. lam acc.
       match samples with [sample] ++ samples then
         -- Invalidate sample if it has the invalid index or with probability
@@ -123,7 +131,7 @@ let modTrace: () -> () = lam.
           if eqi i 0 then true else
             if modGlobal then bernoulliSample mProb else false in
 
-        let acc: [Option Any] =
+        let acc: [Option (Any, Float)] =
           cons (if mod then None () else Some sample) acc in
         rec (subi i 1) samples acc
 
@@ -139,17 +147,17 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
   -- Read number of runs and sweeps
   match monteCarloArgs () with (runs, sweeps) in
 
-  recursive let mh : [Float] -> [Float] -> [a] -> Int -> ([Float], [a]) =
-    lam weights. lam weightsReused. lam samples. lam iter.
+  recursive let mh : [Float] -> [a] -> Int -> ([Float], [a]) =
+    lam weights. lam samples. lam iter.
       if leqi iter 0 then (weights, samples)
       else
         let prevSample = head samples in
         let prevTraceLength = deref state.traceLength in
         let prevWeight = head weights in
-        let prevWeightReused = head weightsReused in
         modTrace ();
         modref state.weight 0.;
         modref state.weightReused 0.;
+        modref state.weightReusedPrev 0.;
         modref state.alignedTrace emptyList;
         modref state.traceLength 0;
         let sample = model state in
@@ -157,10 +165,11 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
+        let weightReusedPrev = deref state.weightReusedPrev in
         let logMhAcceptProb =
           minf 0. (addf (addf
                     (subf weight prevWeight)
-                    (subf weightReused prevWeightReused))
+                    (subf weightReused weightReusedPrev))
                     (subf (log (int2float prevTraceLength))
                               (log (int2float traceLength))))
         in
@@ -168,7 +177,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         -- print "weight: "; printLn (float2string weight);
         -- print "prevWeight: "; printLn (float2string prevWeight);
         -- print "weightReused: "; printLn (float2string weightReused);
-        -- print "prevWeightReused: "; printLn (float2string prevWeightReused);
+        -- print "weightReusedPrev: "; printLn (float2string weightReusedPrev);
         -- print "prevTraceLength: "; printLn (float2string (int2float prevTraceLength));
         -- print "traceLength: "; printLn (float2string (int2float traceLength));
         let iter = subi iter 1 in
@@ -176,13 +185,11 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
           mcmcAccept ();
           mh
             (cons weight weights)
-            (cons weightReused weightsReused)
             (cons sample samples)
             iter
         else
           mh
             (cons prevWeight weights)
-            (cons prevWeightReused weightsReused)
             (cons prevSample samples)
             iter
   in
@@ -198,7 +205,6 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
       -- NOTE(dlunde,2022-08-22): Are the weights really meaningful beyond
       -- computing the MH acceptance ratio?
       let weight = deref state.weight in
-      let weightReused = deref state.weightReused in
       let iter = subi runs 1 in
 
       -- Set aligned trace length (a constant, only modified here)
@@ -206,7 +212,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
 
       -- Sample the rest
       -- printLn "--------------";
-      let res = mh [weight] [weightReused] [sample] iter in
+      let res = mh [weight] [sample] iter in
 
       -- Reverse to get the correct order
       let res = match res with (weights,samples) in

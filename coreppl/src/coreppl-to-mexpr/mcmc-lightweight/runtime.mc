@@ -26,16 +26,17 @@ type State = {
   weight: Ref Float,
 
   -- The weight of reused values in the current execution
+  weightReusedPrev: Ref Float,
   weightReused: Ref Float,
 
   -- The sample database for this execution
-  db: Ref (Map Address Any),
+  db: Ref (Map Address (Any,Float)),
 
   -- Number of encountered assumes
   traceLength: Ref Int,
 
   -- The previous database, with potentially invalidated samples
-  oldDb: Ref (Map Address (Option Any))
+  oldDb: Ref (Map Address (Option (Any,Float)))
 
 }
 
@@ -89,6 +90,7 @@ let constructAddress: Address -> Int -> Address = lam prev. lam sym.
 -- State (reused throughout inference)
 let state: State = {
   weight = ref 0.,
+  weightReusedPrev = ref 0.,
   weightReused = ref 0.,
   db = ref emptyAddressMap,
   traceLength = ref 0,
@@ -103,18 +105,23 @@ let incrTraceLength: () -> () = lam.
 
 -- Procedure at samples
 let sample: all a. Address -> Dist a -> a = lam addr. lam dist.
-  let oldDb: Map Address (Option Any) = deref state.oldDb in
-  let newSample: () -> Any = lam. unsafeCoerce (dist.sample ()) in
-  let sample: Any =
-    match mapLookup addr oldDb with Some (Some sample) then
+  let oldDb: Map Address (Option (Any,Float)) = deref state.oldDb in
+  let newSample: () -> (Any,Float) = lam.
+    let s = dist.sample () in
+    let w = dist.logObserve s in
+    (unsafeCoerce s, w)
+  in
+  let sample: (Any,Float) =
+    match mapLookup addr oldDb with Some (Some (sample,w)) then
       -- printLn (join [
       --   "LIGHTWEIGHT: _Reused_ sample, address ",
       --      join ["[", strJoin ", " (map int2string addr.1), "]"]
       -- ]);
       let s: a = unsafeCoerce sample in
-      modref state.weightReused
-        (addf (deref state.weightReused) (dist.logObserve s));
-      sample
+      let wNew = dist.logObserve s in
+      modref state.weightReused (addf (deref state.weightReused) wNew);
+      modref state.weightReusedPrev (addf (deref state.weightReusedPrev) w);
+      (sample, wNew)
     else
       -- printLn (join [
       --   "LIGHTWEIGHT: _New_ sample, address ",
@@ -124,7 +131,7 @@ let sample: all a. Address -> Dist a -> a = lam addr. lam dist.
   in
   incrTraceLength ();
   modref state.db (mapInsert addr sample (deref state.db));
-  unsafeCoerce sample
+  unsafeCoerce (sample.0)
 
 -- Function to propose db changes between MH iterations.
 let modDb: () -> () = lam.
@@ -141,7 +148,7 @@ let modDb: () -> () = lam.
   let invalidIndex: Int = uniformDiscreteSample 0 (subi (mapSize db) 1) in
   let currentIndex: Ref Int = ref 0 in
   modref state.oldDb
-    (mapMap (lam sample: Any.
+    (mapMap (lam sample: (Any,Float).
        -- Invalidate sample if it has the invalid index or with probability
        -- mProb if global modification is enabled.
        let mod =
@@ -158,17 +165,17 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
   -- Read number of runs and sweeps
   match monteCarloArgs () with (runs, sweeps) in
 
-  recursive let mh : [Float] -> [Float] -> [a] -> Int -> ([Float], [a]) =
-    lam weights. lam weightsReused. lam samples. lam iter.
+  recursive let mh : [Float] -> [a] -> Int -> ([Float], [a]) =
+    lam weights. lam samples. lam iter.
       if leqi iter 0 then (weights, samples)
       else
         let prevSample = head samples in
         let prevTraceLength = deref state.traceLength in
         let prevWeight = head weights in
-        let prevWeightReused = head weightsReused in
         modDb ();
         modref state.weight 0.;
         modref state.weightReused 0.;
+        modref state.weightReusedPrev 0.;
         modref state.db emptyAddressMap;
         modref state.traceLength 0;
         let sample = model state in
@@ -176,10 +183,11 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
+        let weightReusedPrev = deref state.weightReusedPrev in
         let logMhAcceptProb =
           minf 0. (addf (addf
                     (subf weight prevWeight)
-                    (subf weightReused prevWeightReused))
+                    (subf weightReused weightReusedPrev))
                     (subf (log (int2float prevTraceLength))
                               (log (int2float traceLength))))
         in
@@ -187,7 +195,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         -- print "weight: "; printLn (float2string weight);
         -- print "prevWeight: "; printLn (float2string prevWeight);
         -- print "weightReused: "; printLn (float2string weightReused);
-        -- print "prevWeightReused: "; printLn (float2string prevWeightReused);
+        -- print "weightReusedPrev: "; printLn (float2string weightReusedPrev);
         -- print "prevTraceLength: "; printLn (float2string (int2float prevTraceLength));
         -- print "traceLength: "; printLn (float2string (int2float traceLength));
         let iter = subi iter 1 in
@@ -195,13 +203,11 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
           mcmcAccept ();
           mh
             (cons weight weights)
-            (cons weightReused weightsReused)
             (cons sample samples)
             iter
         else
           mh
             (cons prevWeight weights)
-            (cons prevWeightReused weightsReused)
             (cons prevSample samples)
             iter
   in
@@ -217,12 +223,11 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
       -- NOTE(dlunde,2022-08-22): Are the weights really meaningful beyond
       -- computing the MH acceptance ratio?
       let weight = deref state.weight in
-      let weightReused = deref state.weightReused in
       let iter = subi runs 1 in
 
       -- Sample the rest
       -- printLn "--------------";
-      let res = mh [weight] [weightReused] [sample] iter in
+      let res = mh [weight] [sample] iter in
 
       -- Reverse to get the correct order
       let res = match res with (weights,samples) in
