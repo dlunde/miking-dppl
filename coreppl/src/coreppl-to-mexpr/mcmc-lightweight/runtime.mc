@@ -136,28 +136,27 @@ let sample: all a. Address -> Dist a -> a = lam addr. lam dist.
 -- Function to propose db changes between MH iterations.
 let modDb: () -> () = lam.
 
-  let gProb = compileOptions.mcmcLightweightGlobalProb in
-  let mProb = compileOptions.mcmcLightweightGlobalModProb in
-
   let db = deref state.db in
 
   -- Enable global modifications with probability gProb
+  let gProb = compileOptions.mcmcLightweightGlobalProb in
   let modGlobal: Bool = bernoulliSample gProb in
 
-  -- One item in the db (chosen at random) must always change
-  let invalidIndex: Int = uniformDiscreteSample 0 (subi (mapSize db) 1) in
-  let currentIndex: Ref Int = ref 0 in
-  modref state.oldDb
-    (mapMap (lam sample: (Any,Float).
-       -- Invalidate sample if it has the invalid index or with probability
-       -- mProb if global modification is enabled.
-       let mod =
-         if eqi invalidIndex (deref currentIndex) then true else
-           if modGlobal then bernoulliSample mProb else false in
-       let sample = if mod then None () else Some sample in
-       modref currentIndex (addi (deref currentIndex) 1);
-       sample
-    ) db)
+  if modGlobal then
+    modref state.oldDb (mapMap (lam. None ()) db)
+  else
+    -- One item in the db (chosen at random) must always change
+    let invalidIndex: Int = uniformDiscreteSample 0 (subi (mapSize db) 1) in
+    let currentIndex: Ref Int = ref 0 in
+    modref state.oldDb
+      (mapMap (lam sample: (Any,Float).
+         -- Invalidate sample if it has the invalid index
+         let sample = if eqi invalidIndex (deref currentIndex) then
+                        None ()
+                      else Some sample in
+         modref currentIndex (addi (deref currentIndex) 1);
+         sample
+      ) db)
 
 -- General inference algorithm for aligned MCMC
 let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFun.

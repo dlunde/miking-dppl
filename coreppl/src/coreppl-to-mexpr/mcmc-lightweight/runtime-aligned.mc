@@ -110,35 +110,31 @@ let sampleUnaligned: all a. Dist a -> a = lam dist.
 -- Function to propose aligned trace changes between MH iterations.
 let modTrace: () -> () = lam.
 
-  let gProb = compileOptions.mcmcLightweightGlobalProb in
-  let mProb = compileOptions.mcmcLightweightGlobalModProb in
-
   let alignedTraceLength: Int = deref state.alignedTraceLength in
-
-  -- One index must always change
-  let invalidIndex: Int = uniformDiscreteSample 0 (subi alignedTraceLength 1) in
-
-  -- Enable global modifications with probability gProb
-  let modGlobal: Bool = bernoulliSample gProb in
 
   recursive let rec: Int -> [(Any,Float)] -> [Option (Any,Float)]
                        -> [Option (Any,Float)] =
     lam i. lam samples. lam acc.
       match samples with [sample] ++ samples then
-        -- Invalidate sample if it has the invalid index or with probability
-        -- mProb if global modification is enabled.
-        let mod =
-          if eqi i 0 then true else
-            if modGlobal then bernoulliSample mProb else false in
-
+        -- Invalidate sample if it has the invalid index
         let acc: [Option (Any, Float)] =
-          cons (if mod then None () else Some sample) acc in
+          cons (if eqi i 0 then None () else Some sample) acc in
         rec (subi i 1) samples acc
 
       else acc
   in
-  modref state.oldAlignedTrace
-    (rec invalidIndex (deref state.alignedTrace) emptyList)
+
+  -- Enable global modifications with probability gProb
+  let gProb = compileOptions.mcmcLightweightGlobalProb in
+  let modGlobal: Bool = bernoulliSample gProb in
+
+  if modGlobal then
+    modref state.oldAlignedTrace (map (lam. None ()) (deref state.alignedTrace))
+  else
+    -- One index must always change
+    let invalidIndex: Int = uniformDiscreteSample 0 (subi alignedTraceLength 1) in
+    modref state.oldAlignedTrace
+      (rec invalidIndex (deref state.alignedTrace) emptyList)
 
 
 -- General inference algorithm for aligned MCMC
@@ -168,11 +164,13 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         let weightReused = deref state.weightReused in
         let weightReusedPrev = deref state.weightReusedPrev in
         let logMhAcceptProb =
-          minf 0. (addf (addf
+          minf 0. (addf -- (addf
                     (subf weight prevWeight)
                     (subf weightReused weightReusedPrev))
-                    (subf (log (int2float prevTraceLength))
-                              (log (int2float traceLength))))
+                    -- This part is actually wrong for aligned. The random draw to change is selected between the aligned draws, which there are a constant number of in each execution.
+                    -- (subf (log (int2float prevTraceLength))
+                    --           (log (int2float traceLength)))
+                    -- )
         in
         -- print "logMhAcceptProb: "; printLn (float2string logMhAcceptProb);
         -- print "weight: "; printLn (float2string weight);
