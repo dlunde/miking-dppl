@@ -28,9 +28,6 @@ type State = {
   -- The aligned trace for this execution
   alignedTrace: Ref [(Any, Float)],
 
-  -- Number of encountered assumes (unaligned and aligned)
-  traceLength: Ref Int,
-
   -- The previous aligned trace, with potentially invalidated samples
   oldAlignedTrace: Ref [Option (Any,Float)],
 
@@ -49,16 +46,12 @@ let state: State = {
   weightReusedPrev = ref 0.,
   weightReused = ref 0.,
   alignedTrace = ref emptyList,
-  traceLength = ref 0,
   oldAlignedTrace = ref emptyList,
   alignedTraceLength = ref (negi 1)
 }
 
 let updateWeight = lam v.
   modref state.weight (addf (deref state.weight) v)
-
-let incrTraceLength: () -> () = lam.
-  modref state.traceLength (addi (deref state.traceLength) 1)
 
 -- Procedure at aligned samples
 let sampleAligned: all a. Dist a -> a = lam dist.
@@ -98,13 +91,11 @@ let sampleAligned: all a. Dist a -> a = lam dist.
       newSample ()
 
   in
-  incrTraceLength ();
   modref state.alignedTrace (cons sample (deref state.alignedTrace));
   unsafeCoerce (sample.0)
 
 let sampleUnaligned: all a. Dist a -> a = lam dist.
   -- printLn "ALIGNED: Unaligned sample, should never happen for this model";
-  incrTraceLength ();
   dist.sample ()
 
 -- Function to propose aligned trace changes between MH iterations.
@@ -149,28 +140,21 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
       else
         let prevAlignedTrace = deref state.alignedTrace in
         let prevSample = head samples in
-        let prevTraceLength = deref state.traceLength in
         let prevWeight = head weights in
         modTrace ();
         modref state.weight 0.;
         modref state.weightReused 0.;
         modref state.weightReusedPrev 0.;
         modref state.alignedTrace emptyList;
-        modref state.traceLength 0;
         let sample = model state in
         -- printLn "--------------";
-        let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
         let weightReusedPrev = deref state.weightReusedPrev in
         let logMhAcceptProb =
-          minf 0. (addf -- (addf
+          minf 0. (addf
                     (subf weight prevWeight)
                     (subf weightReused weightReusedPrev))
-                    -- This part is actually wrong for aligned. The random draw to change is selected between the aligned draws, which there are a constant number of in each execution.
-                    -- (subf (log (int2float prevTraceLength))
-                    --           (log (int2float traceLength)))
-                    -- )
         in
         -- print "logMhAcceptProb: "; printLn (float2string logMhAcceptProb);
         -- print "weight: "; printLn (float2string weight);
@@ -178,7 +162,6 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         -- print "weightReused: "; printLn (float2string weightReused);
         -- print "weightReusedPrev: "; printLn (float2string weightReusedPrev);
         -- print "prevTraceLength: "; printLn (float2string (int2float prevTraceLength));
-        -- print "traceLength: "; printLn (float2string (int2float traceLength));
         let iter = subi iter 1 in
         if bernoulliSample (exp logMhAcceptProb) then
           mcmcAccept ();

@@ -146,7 +146,7 @@ let modDb: () -> () = lam.
     modref state.oldDb (mapMap (lam. None ()) db)
   else
     -- One item in the db (chosen at random) must always change
-    let invalidIndex: Int = uniformDiscreteSample 0 (subi (mapSize db) 1) in
+    let invalidIndex: Int = uniformDiscreteSample 0 (subi (deref state.traceLength) 1) in
     let currentIndex: Ref Int = ref 0 in
     modref state.oldDb
       (mapMap (lam sample: (Any,Float).
@@ -206,8 +206,9 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
             iter
         else
           -- NOTE(dlunde,2022-10-06): VERY IMPORTANT: Restore previous database
-          -- as we reject and reuse the old sample.
+          -- and trace length as we reject and reuse the old sample.
           modref state.db prevDb;
+          modref state.traceLength prevTraceLength;
           mh
             (cons prevWeight weights)
             (cons prevSample samples)
