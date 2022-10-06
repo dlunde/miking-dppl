@@ -56,7 +56,7 @@ let default = {
   earlyStop = true,
   debugMExprCompile = true,
   mcmcLightweightGlobalProb = 0.1,
-  mcmcLightweightGlobalModProb = 0.1,
+  mcmcLightweightGlobalModProb = 1.0,
   printAcceptanceRate = false
 }
 

@@ -169,6 +169,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
     lam weights. lam samples. lam iter.
       if leqi iter 0 then (weights, samples)
       else
+        let prevDb = deref state.db in
         let prevSample = head samples in
         let prevTraceLength = deref state.traceLength in
         let prevWeight = head weights in
@@ -179,7 +180,6 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         modref state.db emptyAddressMap;
         modref state.traceLength 0;
         let sample = model state in
-        -- printLn "--------------";
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
@@ -206,6 +206,9 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
             (cons sample samples)
             iter
         else
+          -- NOTE(dlunde,2022-10-06): VERY IMPORTANT: Restore previous database
+          -- as we reject and reuse the old sample.
+          modref state.db prevDb;
           mh
             (cons prevWeight weights)
             (cons prevSample samples)

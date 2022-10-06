@@ -151,6 +151,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
     lam weights. lam samples. lam iter.
       if leqi iter 0 then (weights, samples)
       else
+        let prevAlignedTrace = deref state.alignedTrace in
         let prevSample = head samples in
         let prevTraceLength = deref state.traceLength in
         let prevWeight = head weights in
@@ -188,6 +189,9 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
             (cons sample samples)
             iter
         else
+          -- NOTE(dlunde,2022-10-06): VERY IMPORTANT: Restore previous aligned
+          -- trace as we reject and reuse the old sample.
+          modref state.alignedTrace prevAlignedTrace;
           mh
             (cons prevWeight weights)
             (cons prevSample samples)
