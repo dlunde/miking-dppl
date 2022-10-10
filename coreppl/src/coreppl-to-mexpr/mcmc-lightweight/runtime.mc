@@ -26,7 +26,7 @@ type State = {
   weight: Ref Float,
 
   -- The weight of reused values in the current execution
-  weightReusedPrev: Ref Float,
+  prevWeightReused: Ref Float,
   weightReused: Ref Float,
 
   -- The sample database for this execution
@@ -90,7 +90,7 @@ let constructAddress: Address -> Int -> Address = lam prev. lam sym.
 -- State (reused throughout inference)
 let state: State = {
   weight = ref 0.,
-  weightReusedPrev = ref 0.,
+  prevWeightReused = ref 0.,
   weightReused = ref 0.,
   db = ref emptyAddressMap,
   traceLength = ref 0,
@@ -113,20 +113,12 @@ let sample: all a. Address -> Dist a -> a = lam addr. lam dist.
   in
   let sample: (Any,Float) =
     match mapLookup addr oldDb with Some (Some (sample,w)) then
-      -- printLn (join [
-      --   "LIGHTWEIGHT: _Reused_ sample, address ",
-      --      join ["[", strJoin ", " (map int2string addr.1), "]"]
-      -- ]);
       let s: a = unsafeCoerce sample in
       let wNew = dist.logObserve s in
       modref state.weightReused (addf (deref state.weightReused) wNew);
-      modref state.weightReusedPrev (addf (deref state.weightReusedPrev) w);
+      modref state.prevWeightReused (addf (deref state.prevWeightReused) w);
       (sample, wNew)
     else
-      -- printLn (join [
-      --   "LIGHTWEIGHT: _New_ sample, address ",
-      --      join ["[", strJoin ", " (map int2string addr.1), "]"]
-      -- ]);
       newSample ()
   in
   incrTraceLength ();
@@ -143,7 +135,8 @@ let modDb: () -> () = lam.
   let modGlobal: Bool = bernoulliSample gProb in
 
   if modGlobal then
-    modref state.oldDb (mapMap (lam. None ()) db)
+    -- modref state.oldDb (mapMap (lam. None ()) db)
+    modref state.oldDb emptyAddressMap
   else
     -- One item in the db (chosen at random) must always change
     let invalidIndex: Int = uniformDiscreteSample 0 (subi (deref state.traceLength) 1) in
@@ -175,18 +168,18 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         modDb ();
         modref state.weight 0.;
         modref state.weightReused 0.;
-        modref state.weightReusedPrev 0.;
+        modref state.prevWeightReused 0.;
         modref state.db emptyAddressMap;
         modref state.traceLength 0;
         let sample = model state in
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
-        let weightReusedPrev = deref state.weightReusedPrev in
+        let prevWeightReused = deref state.prevWeightReused in
         let logMhAcceptProb =
           minf 0. (addf (addf
                     (subf weight prevWeight)
-                    (subf weightReused weightReusedPrev))
+                    (subf weightReused prevWeightReused))
                     (subf (log (int2float prevTraceLength))
                               (log (int2float traceLength))))
         in
@@ -194,7 +187,7 @@ let run : all a. (State -> a) -> (Res a -> ()) -> () = lam model. lam printResFu
         -- print "weight: "; printLn (float2string weight);
         -- print "prevWeight: "; printLn (float2string prevWeight);
         -- print "weightReused: "; printLn (float2string weightReused);
-        -- print "weightReusedPrev: "; printLn (float2string weightReusedPrev);
+        -- print "prevWeightReused: "; printLn (float2string prevWeightReused);
         -- print "prevTraceLength: "; printLn (float2string (int2float prevTraceLength));
         -- print "traceLength: "; printLn (float2string (int2float traceLength));
         let iter = subi iter 1 in

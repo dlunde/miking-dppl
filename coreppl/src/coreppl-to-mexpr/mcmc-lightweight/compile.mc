@@ -11,6 +11,10 @@ include "mexpr/const-types.mc"
 
 let addrName = nameSym "addr"
 let sym: Ref Int = ref 0
+let uniqueSym = lam.
+  let s = deref sym in
+  modref sym (addi s 1);
+  s
 
 lang MExprPPLLightweightMCMC =
   MExprPPL + Resample + TransformDist + MExprANFAll + MExprPPLCFA + MExprArity
@@ -42,11 +46,11 @@ lang MExprPPLLightweightMCMC =
 
   | TmLet ({ ident = ident, body = TmAssume t, inexpr = inexpr } & r) ->
     let i = withInfo r.info in
-    TmLet { r with
-      body = i (app_ (i (var_
-          (if setMem ident unalignedNames then "sampleUnaligned"
-           else "sampleAligned")
-        )) t.dist)
+    TmLet { r with body =
+      if setMem ident unalignedNames then
+        i (appf2_ (i (var_ "sampleUnaligned")) (i (int_ (uniqueSym ()))) t.dist)
+      else
+        i (appf1_ (i (var_ "sampleAligned")) t.dist)
     }
 
   | TmObserve t ->
@@ -88,8 +92,7 @@ lang MExprPPLLightweightMCMC =
   sem addr =
   | i ->
     let i = withInfo i in
-    let s = deref sym in
-    modref sym (addi s 1);
+    let s = uniqueSym () in
     i (appf2_ (i (var_ "constructAddress")) (i (nvar_ addrName)) (i (int_ s)))
 
   sem transformConst: Int -> Expr -> Expr

@@ -148,6 +148,7 @@ let mexprCompile: Options -> Expr -> Expr =
       ("printSamples", bool_ options.printSamples),
       ("earlyStop", bool_ options.earlyStop),
       ("mcmcLightweightGlobalProb", float_ options.mcmcLightweightGlobalProb),
+      ("mcmcLightweightReuseLocal", bool_ options.mcmcLightweightReuseLocal),
       ("printAcceptanceRate", bool_ options.printAcceptanceRate)
     ]) in
 

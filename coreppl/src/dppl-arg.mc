@@ -33,6 +33,7 @@ type Options = {
 
   -- Lightweight MCMC options
   mcmcLightweightGlobalProb: Float,
+  mcmcLightweightReuseLocal: Bool,
 
   -- MCMC options,
   printAcceptanceRate: Bool
@@ -55,6 +56,7 @@ let default = {
   earlyStop = true,
   debugMExprCompile = true,
   mcmcLightweightGlobalProb = 0.1,
+  mcmcLightweightReuseLocal = true,
   printAcceptanceRate = false
 }
 
@@ -130,6 +132,10 @@ let config = [
       float2string default.mcmcLightweightGlobalProb, "."
     ],
     lam p : ArgPart Options. let o : Options = p.options in {o with mcmcLightweightGlobalProb = argToFloat p }),
+  ([("--no-reuse-local", "", "")],
+    "Do not try to reuse local variables in lightweight MCMC with --align option.",
+    lam p: ArgPart Options.
+      let o: Options = p.options in {o with mcmcLightweightReuseLocal = false}),
   ([("--print-accept-rate", "", "")],
     "Prints the acceptance rate of MCMC algorithms.",
     lam p: ArgPart Options.
