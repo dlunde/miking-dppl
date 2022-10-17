@@ -136,8 +136,8 @@ let mexprCompile: Options -> Expr -> Expr =
     -- runtime)
     let prog = removeExternalDefs externals prog in
 
-    -- Put model in top-level model function and extract deterministic definitions
-    let prog = (ulet_ "model" (lams_ [("state", tycon_ "State")] prog)) in
+    -- Put model in top-level model function
+    let prog = ulet_ "model" (lams_ [("state", tycon_ "State")] prog) in
 
     -- Construct record accessible in runtime
     -- NOTE(dlunde,2022-06-28): It would be nice if we automatically lift the

@@ -44,42 +44,24 @@ let emptyAddress = (0,toList [])
 
 -- Address comparison
 let addrCmp : Address -> Address -> Int = lam a1. lam a2.
-  -- printLn (join [
-  --   "CMP: Comparing (",
-  --   int2string a1.0, ",",
-  --   join ["[", strJoin ", " (map int2string a1.1), "]"],
-  --   ") and (",
-  --   int2string a2.0, ",",
-  --   join ["[", strJoin ", " (map int2string a2.1), "]"],
-  --   ")"
-  -- ]);
   recursive let work = lam l1. lam l2.
     match (l1, l2) with ([h1] ++ t1, [h2] ++ t2) then
-      -- printLn "CMP: Match 1 ...";
       let c = subi h1 h2 in
       if eqi c 0 then work t1 t2
       else c
     else match (l1, l2) with ([_] ++ _, []) then
-      -- printLn "CMP: Match 2 ...";
       1
     else match (l1, l2) with ([], [_] ++ _) then
-      -- printLn "CMP: Match 3 ...";
       negi 1
     else
-      -- printLn "CMP: Match 4 ..., addrCmp equal!";
       0
   in
   let n1 = a1.0 in
-  -- printLn (join ["CMP: n1 =", int2string n1]);
   let n2 = a2.0 in
-  -- printLn (join ["CMP: n2 =", int2string n2]);
   let ndiff = subi n1 n2 in
-  -- printLn (join ["CMP: ndiff =", int2string ndiff]);
   let res = if eqi ndiff 0 then
-    -- printLn "CMP: Entering work...";
     work a1.1 a2.1
   else ndiff in
-  -- printLn "------------------";
   res
 
 let emptyAddressMap = mapEmpty addrCmp
